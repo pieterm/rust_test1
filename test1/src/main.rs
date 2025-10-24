@@ -40,8 +40,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(read_button1_task(button1_pin)).ok();
     spawner.spawn(print_button2_state_task()).ok();
     spawner.spawn(read_button2_task(button2_pin)).ok();
-    // spawner.spawn(another_button_watching_task()).ok();
-    // spawner.spawn(another_button_publishing_task(second_button_pin)).ok();
 
 
     loop {
@@ -57,13 +55,6 @@ async fn print_button1_state_task() {
     let button_watch_receiver_result = BUTTON1_WATCH.receiver();
     // let button_watch_receiver_result = BUTTON_PUB_SUB.subscriber();
     match button_watch_receiver_result {
-        // Ok(mut button_state_receiver) => {
-        //     loop {
-        //         let button_state = button_state_receiver.next_message().await;
-        //         defmt::info!("button state: {:?}", button_state);
-        //     }
-        // }
-        // Err(e) => {defmt::error!("no extra watchers available: {:?}", e)}
         Some(mut button_watch_receiver) => {
             loop {
                 let button_state = button_watch_receiver.changed().await;
@@ -80,13 +71,6 @@ async fn print_button2_state_task() {
     let button_watch_receiver_result = BUTTON2_WATCH.receiver();
     // let button_watch_receiver_result = BUTTON_PUB_SUB.subscriber();
     match button_watch_receiver_result {
-        // Ok(mut button_state_receiver) => {
-        //     loop {
-        //         let button_state = button_state_receiver.next_message().await;
-        //         defmt::info!("button state: {:?}", button_state);
-        //     }
-        // }
-        // Err(e) => {defmt::error!("no extra watchers available: {:?}", e)}
         Some(mut button_watch_receiver) => {
             loop {
                 let button_state = button_watch_receiver.changed().await;
@@ -130,55 +114,3 @@ async fn read_button2_task(mut button: Input<'static>){
         Timer::after(Duration::from_millis(5)).await; //debounce time
     }
 }
-
-
-// // optional: see what happens when you want to use multiple receivers for the watch.
-
-// #[embassy_executor::task]
-// async fn another_button_watching_task() {
-//     defmt::info!("start another_button_watching_task");
-//     let button_watch_receiver_result = BUTTON_WATCH.receiver();
-
-//     match button_watch_receiver_result {
-//         Some(mut button_watch_receiver) => {
-//             loop {
-//                 let button_state = button_watch_receiver.changed().await;
-//                 defmt::info!("button state from another watching task: {:?}", button_state);
-//             }
-//         }
-//         None => {defmt::error!("no extra watchers available!")}
-//     }
-// }
-
-
-// (Optional and advanced)
-// Create another task that also produces data. So, 2 producers and 2 consumers. Maybe you need another
-// async datatype: https://docs.embassy.dev/embassy-sync/git/default/index.html
-
-// use embassy_sync::pubsub::PubSubChannel;
-// static BUTTON_PUB_SUB: PubSubChannel<CriticalSectionRawMutex, ButtonState, 1, 2, 2> = PubSubChannel::new();
-//
-// #[embassy_executor::task]
-// async fn another_button_publishing_task(mut button: Input<'static>){
-//     defmt::info!("start another_button_publishing_task");
-//     let publisher = BUTTON_PUB_SUB.publisher().unwrap();
-//     loop {
-//         button.wait_for_falling_edge().await;
-//         publisher.publish(ButtonState::Pressed).await;
-//         Timer::after(Duration::from_millis(5)).await; //debounce time
-//         button.wait_for_rising_edge().await;
-//         publisher.publish(ButtonState::Released).await;
-//         Timer::after(Duration::from_millis(5)).await; //debounce time
-//     }
-// }
-//
-// #[embassy_executor::task]
-// async fn yet_another_button_watching_task() {
-//     defmt::info!("start yet_another_button_watching_task");
-//     let mut consumer = BUTTON_PUB_SUB.subscriber().unwrap();
-//
-//     loop {
-//         let button_state = consumer.next_message().await;
-//         defmt::info!("button state from yet another watching task: {:?}", button_state);
-//     }
-// }
