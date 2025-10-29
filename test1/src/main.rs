@@ -4,6 +4,7 @@
 use defmt::Format;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use embassy_sync::channel::Channel;
 use esp_backtrace as _;
 use esp_println as _;
 
@@ -45,6 +46,8 @@ enum ButtonState {
 
 static BUTTON1_WATCH: Watch<CriticalSectionRawMutex, ButtonState, 2> = Watch::new();
 static BUTTON2_WATCH: Watch<CriticalSectionRawMutex, ButtonState, 2> = Watch::new();
+
+static SHARED_CHANEL: Channel<CriticalSectionRawMutex, u32, 2> = Channel::new();
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -130,6 +133,7 @@ async fn read_button1_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
+        let _ = SHARED_CHANEL.send(1);
         // publisher.publish(ButtonState::Pressed).await;
         Timer::after(Duration::from_millis(5)).await; //debounce time
         button.wait_for_rising_edge().await;
@@ -146,6 +150,7 @@ async fn read_button2_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
+        let _ = SHARED_CHANEL.send(2);
         // publisher.publish(ButtonState::Pressed).await;
         Timer::after(Duration::from_millis(5)).await; //debounce time
         button.wait_for_rising_edge().await;
@@ -214,6 +219,9 @@ async fn draw_display_task(
         let image = Image::new(&logo, logo_position);
         image.draw(&mut display).unwrap();
 
-        Timer::after(Duration::from_millis(3000)).await;
+        // Timer::after(Duration::from_millis(3000)).await;
+
+        let val = SHARED_CHANEL.receive().await;
+        defmt::info!("val: {:?}", val);
     }
 }
