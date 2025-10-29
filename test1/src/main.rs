@@ -7,49 +7,29 @@ use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_println as _;
 
-use embedded_graphics::{
-    image::Image, pixelcolor::Rgb565, prelude::*
-};
- 
+use embedded_graphics::{image::Image, pixelcolor::Rgb565, prelude::*};
+
 use mipidsi::{
-    interface::SpiInterface, models::ST7789, options::{ColorInversion, Orientation, Rotation}
+    interface::SpiInterface,
+    models::ST7789,
+    options::{ColorInversion, Orientation, Rotation},
 };
 
 use esp_hal::{
-    gpio::{
-        Level,
-        Input,
-        InputConfig,
-        Output,
-        OutputConfig
-    },
+    delay::Delay,
+    gpio::{Input, InputConfig, Level, Output, OutputConfig},
+    peripherals::{GPIO4, GPIO5, GPIO16, GPIO18, GPIO19, GPIO23, SPI2},
     spi::{
         Mode,
-        master::{
-            Spi,
-            Config,
-        },
+        master::{Config, Spi},
     },
-    peripherals::{
-      SPI2,
-      GPIO4,
-      GPIO5,
-      GPIO16,
-      GPIO18,
-      GPIO19,
-      GPIO23,
-    },
-    timer::timg::TimerGroup,
     time::Rate,
-    delay::Delay,
+    timer::timg::TimerGroup,
 };
 
 use embedded_hal_bus::spi::ExclusiveDevice;
 
-use embassy_sync::{
-    watch::Watch,
-    blocking_mutex::raw::CriticalSectionRawMutex
-};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, watch::Watch};
 use tinybmp::Bmp;
 
 const TFT_WIDTH: u16 = 135;
@@ -81,20 +61,28 @@ async fn main(spawner: Spawner) {
     let spi = peripherals.SPI2;
     let mosi = peripherals.GPIO19;
     let sclk = peripherals.GPIO18;
-    let pin_chip_select   = peripherals.GPIO5;
-    let pin_spi_datacommand   = peripherals.GPIO16;
+    let pin_chip_select = peripherals.GPIO5;
+    let pin_spi_datacommand = peripherals.GPIO16;
     let pin_reset = peripherals.GPIO23;
-    let pin_backlight   = peripherals.GPIO4;
+    let pin_backlight = peripherals.GPIO4;
 
     defmt::info!("init peripherals completed...");
-
 
     spawner.spawn(print_button1_state_task()).ok();
     spawner.spawn(read_button1_task(button1_pin)).ok();
     spawner.spawn(print_button2_state_task()).ok();
     spawner.spawn(read_button2_task(button2_pin)).ok();
-    spawner.spawn(draw_display_task(spi, sclk, mosi, pin_chip_select, pin_spi_datacommand,
-                                    pin_reset, pin_backlight)).ok();
+    spawner
+        .spawn(draw_display_task(
+            spi,
+            sclk,
+            mosi,
+            pin_chip_select,
+            pin_spi_datacommand,
+            pin_reset,
+            pin_backlight,
+        ))
+        .ok();
 
     loop {
         defmt::info!("main loop!");
@@ -109,13 +97,13 @@ async fn print_button1_state_task() {
     let button_watch_receiver_result = BUTTON1_WATCH.receiver();
     // let button_watch_receiver_result = BUTTON_PUB_SUB.subscriber();
     match button_watch_receiver_result {
-        Some(mut button_watch_receiver) => {
-            loop {
-                let button_state = button_watch_receiver.changed().await;
-                defmt::info!("button state: {:?}", button_state);
-            }
+        Some(mut button_watch_receiver) => loop {
+            let button_state = button_watch_receiver.changed().await;
+            defmt::info!("button state: {:?}", button_state);
+        },
+        None => {
+            defmt::error!("no extra watchers available!")
         }
-        None => { defmt::error!("no extra watchers available!") }
     }
 }
 
@@ -125,18 +113,18 @@ async fn print_button2_state_task() {
     let button_watch_receiver_result = BUTTON2_WATCH.receiver();
     // let button_watch_receiver_result = BUTTON_PUB_SUB.subscriber();
     match button_watch_receiver_result {
-        Some(mut button_watch_receiver) => {
-            loop {
-                let button_state = button_watch_receiver.changed().await;
-                defmt::info!("button state: {:?}", button_state);
-            }
+        Some(mut button_watch_receiver) => loop {
+            let button_state = button_watch_receiver.changed().await;
+            defmt::info!("button state: {:?}", button_state);
+        },
+        None => {
+            defmt::error!("no extra watchers available!")
         }
-        None => { defmt::error!("no extra watchers available!") }
     }
 }
 
 #[embassy_executor::task]
-async fn read_button1_task(mut button: Input<'static>){
+async fn read_button1_task(mut button: Input<'static>) {
     defmt::info!("start read_button1_task");
     let sender = BUTTON1_WATCH.sender();
     loop {
@@ -152,7 +140,7 @@ async fn read_button1_task(mut button: Input<'static>){
 }
 
 #[embassy_executor::task]
-async fn read_button2_task(mut button: Input<'static>){
+async fn read_button2_task(mut button: Input<'static>) {
     defmt::info!("start read_button2_task");
     let sender = BUTTON2_WATCH.sender();
     loop {
@@ -168,19 +156,26 @@ async fn read_button2_task(mut button: Input<'static>){
 }
 
 #[embassy_executor::task]
-async fn draw_display_task(spi: SPI2<'static>, sclk: GPIO18<'static>, mosi: GPIO19<'static>,
-                           pin_chip_select: GPIO5<'static>, pin_spi_datacommand: GPIO16<'static>,
-                           pin_reset: GPIO23<'static>, pin_backlight: GPIO4<'static>) {
+async fn draw_display_task(
+    spi: SPI2<'static>,
+    sclk: GPIO18<'static>,
+    mosi: GPIO19<'static>,
+    pin_chip_select: GPIO5<'static>,
+    pin_spi_datacommand: GPIO16<'static>,
+    pin_reset: GPIO23<'static>,
+    pin_backlight: GPIO4<'static>,
+) {
     defmt::info!("Start draw_display_task");
     // Initialize the SPI interface
     let spi_bus = Spi::new(
         spi,
         Config::default()
             .with_frequency(Rate::from_mhz(26))
-            .with_mode(Mode::_0)
-    ).unwrap()
-        .with_sck(sclk)
-        .with_mosi(mosi);
+            .with_mode(Mode::_0),
+    )
+    .unwrap()
+    .with_sck(sclk)
+    .with_mosi(mosi);
 
     let config = OutputConfig::default();
     let cs_output = Output::new(pin_chip_select, Level::High, config);
@@ -188,11 +183,7 @@ async fn draw_display_task(spi: SPI2<'static>, sclk: GPIO18<'static>, mosi: GPIO
     let spi_device = ExclusiveDevice::new_no_delay(spi_bus, cs_output).unwrap();
 
     let mut buffer: [u8; 512] = [0; 512];
-    let di= SpiInterface::new(
-            spi_device,
-            dc_output,
-            &mut buffer,
-        );
+    let di = SpiInterface::new(spi_device, dc_output, &mut buffer);
 
     let mut delay = Delay::new();
     let rst_output = Output::new(pin_reset, Level::High, config);
@@ -203,7 +194,8 @@ async fn draw_display_task(spi: SPI2<'static>, sclk: GPIO18<'static>, mosi: GPIO
         .display_offset(52, 40)
         .orientation(Orientation::new().rotate(Rotation::Deg90))
         .invert_colors(ColorInversion::Inverted)
-        .init(&mut delay).unwrap();
+        .init(&mut delay)
+        .unwrap();
 
     // Configure the backlight pin (TFT_BL) to output and set the pin on HIGH
     let mut backlight_output = Output::new(pin_backlight, Level::Low, config);
@@ -215,7 +207,7 @@ async fn draw_display_task(spi: SPI2<'static>, sclk: GPIO18<'static>, mosi: GPIO
 
     let logo = Bmp::from_slice(include_bytes!("../assets/pieter.bmp")).unwrap();
 
-    loop{
+    loop {
         let display_center = display.bounding_box().center().x_axis();
         let logo_center = logo.bounding_box().center().x_axis();
         let logo_position = display_center - logo_center;
