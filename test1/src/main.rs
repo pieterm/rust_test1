@@ -18,8 +18,8 @@ use mipidsi::{
 use esp_hal::{
     gpio::{
         Level,
-	Input,
-	InputConfig,
+        Input,
+        InputConfig,
         Output,
         OutputConfig
     },
@@ -29,6 +29,15 @@ use esp_hal::{
             Spi,
             Config,
         },
+    },
+    peripherals::{
+      SPI2,
+      GPIO4,
+      GPIO5,
+      GPIO16,
+      GPIO18,
+      GPIO19,
+      GPIO23,
     },
     timer::timg::TimerGroup,
     time::Rate,
@@ -78,56 +87,14 @@ async fn main(spawner: Spawner) {
     let pin_backlight   = peripherals.GPIO4;
 
     defmt::info!("init peripherals completed...");
-    // Initialize the SPI interface
-    let spi_bus = Spi::new(
-            spi,
-            Config::default()
-                .with_frequency(Rate::from_mhz(26))
-                .with_mode(Mode::_0)
-            ).unwrap()
-            .with_sck(sclk)
-            .with_mosi(mosi);
 
-    let config = OutputConfig::default();
-    let cs_output = Output::new(pin_chip_select, Level::High, config);
-    let dc_output = Output::new(pin_spi_datacommand, Level::Low, config);
-    let spi_device = ExclusiveDevice::new_no_delay(spi_bus, cs_output).unwrap();
-
-    static mut SPI_BUFFER: [u8; 512] = [0; 512];
-    let di = unsafe {
-        SpiInterface<'static, ExclusiveDevice<Spi<'static, esp_hal::Blocking>, Output<'static>, embedded_hal_bus::spi::NoDelay>, Output<'static>> = SpiInterface::new(
-            spi_device,    
-            dc_output,
-            &mut SPI_BUFFER,
-        )
-    };
-
-    let mut delay = Delay::new();
-    let rst_output = Output::new(pin_reset, Level::High, config);
-
-    let mut display: mipidsi::Display<SpiInterface<'_, ExclusiveDevice<Spi<'_, esp_hal::Blocking>, Output<'_>, embedded_hal_bus::spi::NoDelay>, Output<'_>>, ST7789, Output<'_>> = mipidsi::Builder::new(ST7789, di)
-        .reset_pin(rst_output)
-        .display_size(TFT_WIDTH as u16, TFT_HEIGHT as u16)
-        .display_offset(52, 40)
-        .orientation(Orientation::new().rotate(Rotation::Deg90))
-        .invert_colors(ColorInversion::Inverted)
-        .init(&mut delay).unwrap();
-
-    
-    // Configure the backlight pin (TFT_BL) to output and set the pin on HIGH
-    let mut backlight_output = Output::new(pin_backlight, Level::Low, config);
-    backlight_output.set_high();
-
-    defmt::info!("Init display complete");
-
-    display.clear(Rgb565::BLACK).unwrap();
 
     spawner.spawn(print_button1_state_task()).ok();
     spawner.spawn(read_button1_task(button1_pin)).ok();
     spawner.spawn(print_button2_state_task()).ok();
     spawner.spawn(read_button2_task(button2_pin)).ok();
-    spawner.spawn(draw_display_task(display)).ok();
-
+    spawner.spawn(draw_display_task(spi, sclk, mosi, pin_chip_select, pin_spi_datacommand,
+                                    pin_reset, pin_backlight)).ok();
 
     loop {
         defmt::info!("main loop!");
@@ -172,7 +139,6 @@ async fn print_button2_state_task() {
 async fn read_button1_task(mut button: Input<'static>){
     defmt::info!("start read_button1_task");
     let sender = BUTTON1_WATCH.sender();
-    // let publisher = BUTTON_PUB_SUB.publisher().unwrap();
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
@@ -189,7 +155,6 @@ async fn read_button1_task(mut button: Input<'static>){
 async fn read_button2_task(mut button: Input<'static>){
     defmt::info!("start read_button2_task");
     let sender = BUTTON2_WATCH.sender();
-    // let publisher = BUTTON_PUB_SUB.publisher().unwrap();
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
@@ -203,22 +168,60 @@ async fn read_button2_task(mut button: Input<'static>){
 }
 
 #[embassy_executor::task]
-async fn draw_display_task(mut display: mipidsi::Display<
-        SpiInterface<'static, ExclusiveDevice<Spi<'static, esp_hal::Blocking>, Output<'static>, embedded_hal_bus::spi::NoDelay>, Output<'static>>,
-        ST7789,
-        Output<'static>,
-    >) {
+async fn draw_display_task(spi: SPI2<'static>, sclk: GPIO18<'static>, mosi: GPIO19<'static>,
+                           pin_chip_select: GPIO5<'static>, pin_spi_datacommand: GPIO16<'static>,
+                           pin_reset: GPIO23<'static>, pin_backlight: GPIO4<'static>) {
     defmt::info!("Start draw_display_task");
+    // Initialize the SPI interface
+    let spi_bus = Spi::new(
+        spi,
+        Config::default()
+            .with_frequency(Rate::from_mhz(26))
+            .with_mode(Mode::_0)
+    ).unwrap()
+        .with_sck(sclk)
+        .with_mosi(mosi);
+
+    let config = OutputConfig::default();
+    let cs_output = Output::new(pin_chip_select, Level::High, config);
+    let dc_output = Output::new(pin_spi_datacommand, Level::Low, config);
+    let spi_device = ExclusiveDevice::new_no_delay(spi_bus, cs_output).unwrap();
+
+    let mut buffer: [u8; 512] = [0; 512];
+    let di= SpiInterface::new(
+            spi_device,
+            dc_output,
+            &mut buffer,
+        );
+
+    let mut delay = Delay::new();
+    let rst_output = Output::new(pin_reset, Level::High, config);
+
+    let mut display = mipidsi::Builder::new(ST7789, di)
+        .reset_pin(rst_output)
+        .display_size(TFT_WIDTH.into(), TFT_HEIGHT.into())
+        .display_offset(52, 40)
+        .orientation(Orientation::new().rotate(Rotation::Deg90))
+        .invert_colors(ColorInversion::Inverted)
+        .init(&mut delay).unwrap();
+
+    // Configure the backlight pin (TFT_BL) to output and set the pin on HIGH
+    let mut backlight_output = Output::new(pin_backlight, Level::Low, config);
+    backlight_output.set_high();
+
+    defmt::info!("Init display complete");
+
+    display.clear(Rgb565::BLACK).unwrap();
 
     let logo = Bmp::from_slice(include_bytes!("../assets/pieter.bmp")).unwrap();
-    
-    loop{    
+
+    loop{
         let display_center = display.bounding_box().center().x_axis();
         let logo_center = logo.bounding_box().center().x_axis();
         let logo_position = display_center - logo_center;
         let image = Image::new(&logo, logo_position);
         image.draw(&mut display).unwrap();
-     
+
         Timer::after(Duration::from_millis(3000)).await;
     }
 }
