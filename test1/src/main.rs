@@ -4,7 +4,8 @@
 use defmt::Format;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use embassy_sync::channel::Channel;
+use embassy_sync::signal::Signal;
+use embassy_futures::select::{select3, Either3};
 use esp_backtrace as _;
 use esp_println as _;
 
@@ -47,7 +48,8 @@ enum ButtonState {
 static BUTTON1_WATCH: Watch<CriticalSectionRawMutex, ButtonState, 2> = Watch::new();
 static BUTTON2_WATCH: Watch<CriticalSectionRawMutex, ButtonState, 2> = Watch::new();
 
-static SHARED_CHANEL: Channel<CriticalSectionRawMutex, u32, 2> = Channel::new();
+static BUTTON1_SIGNAL: Signal<CriticalSectionRawMutex, u32> = Signal::new();
+static BUTTON2_SIGNAL: Signal<CriticalSectionRawMutex, u32> = Signal::new();
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -133,7 +135,7 @@ async fn read_button1_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
-        let _ = SHARED_CHANEL.send(1);
+        BUTTON1_SIGNAL.signal(1);
         // publisher.publish(ButtonState::Pressed).await;
         Timer::after(Duration::from_millis(5)).await; //debounce time
         button.wait_for_rising_edge().await;
@@ -150,7 +152,7 @@ async fn read_button2_task(mut button: Input<'static>) {
     loop {
         button.wait_for_falling_edge().await;
         sender.send(ButtonState::Pressed);
-        let _ = SHARED_CHANEL.send(2);
+        BUTTON2_SIGNAL.signal(1);
         // publisher.publish(ButtonState::Pressed).await;
         Timer::after(Duration::from_millis(5)).await; //debounce time
         button.wait_for_rising_edge().await;
@@ -221,7 +223,25 @@ async fn draw_display_task(
 
         // Timer::after(Duration::from_millis(3000)).await;
 
-        let val = SHARED_CHANEL.receive().await;
-        defmt::info!("val: {:?}", val);
+        match select3(
+            Timer::after(Duration::from_millis(30000)),
+            BUTTON1_SIGNAL.wait(),
+            BUTTON2_SIGNAL.wait(),
+        ).await
+        {
+            Either3::First(_) => {
+                defmt::info!("Timer");
+            }
+            Either3::Second(_) => {
+                defmt::info!("Button 1");
+            }
+            Either3::Third(_) => {
+                defmt::info!("Button 2");
+            }
+        }
+
+
+        // let val = SHARED_CHANEL.receive().await;
+        // defmt::info!("val: {:?}", val);
     }
 }
